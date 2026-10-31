@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Local runtime data (SQLite DB, downloaded files)
+data/
+
+# Per-course configs are personal; keep defaults and the example
+config/courses/*
+!config/courses/.gitkeep
+!config/courses/_example/

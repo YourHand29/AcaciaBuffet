@@ -1,0 +1,164 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import YAML from "yaml";
+import {
+  CourseInfoSchema,
+  CourseWorkflowSchema,
+  type CourseInfo,
+  type CourseInfoInput,
+  type CourseWorkflow,
+  type CourseWorkflowInput,
+} from "./schema.ts";
+import { mergeLayers, stripUserOwned, userOwnedPaths, type Layer } from "./merge.ts";
+
+/**
+ * On-disk layout:
+ *
+ *   <configDir>/defaults/info.yaml          app-wide defaults (user-editable)
+ *   <configDir>/defaults/workflow.yaml
+ *   <configDir>/courses/<courseId>/info.yaml
+ *   <configDir>/courses/<courseId>/workflow.yaml
+ *   <configDir>/courses/<courseId>/info.generated.yaml   last heuristic+AI proposal (for diffing)
+ *
+ * Per-course files hold only what differs from defaults. Resolution:
+ *   defaults ← generated (heuristic/ai) ← user file
+ */
+
+export type ConfigKind = "info" | "workflow";
+
+export interface ResolvedConfigs {
+  info: CourseInfo;
+  workflow: CourseWorkflow;
+}
+
+export class ConfigStore {
+  constructor(private readonly configDir: string) {
+    mkdirSync(join(configDir, "defaults"), { recursive: true });
+    mkdirSync(join(configDir, "courses"), { recursive: true });
+  }
+
+  // ---- paths ----
+  defaultsPath(kind: ConfigKind) {
+    return join(this.configDir, "defaults", `${kind}.yaml`);
+  }
+  coursePath(courseId: number, kind: ConfigKind) {
+    return join(this.configDir, "courses", String(courseId), `${kind}.yaml`);
+  }
+  generatedPath(courseId: number) {
+    return join(this.configDir, "courses", String(courseId), "info.generated.yaml");
+  }
+
+  // ---- raw I/O ----
+  private readYaml(path: string): Record<string, unknown> | null {
+    if (!existsSync(path)) return null;
+    const text = readFileSync(path, "utf8");
+    const parsed = YAML.parse(text);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  }
+  private writeYaml(path: string, value: unknown, header?: string) {
+    mkdirSync(join(path, ".."), { recursive: true });
+    const body = YAML.stringify(value, { lineWidth: 100 });
+    writeFileSync(path, (header ? header.trimEnd() + "\n\n" : "") + body);
+  }
+
+  readRaw(courseId: number, kind: ConfigKind): string {
+    const p = this.coursePath(courseId, kind);
+    return existsSync(p) ? readFileSync(p, "utf8") : "";
+  }
+
+  /** Validate and write a user-edited YAML string. Throws ZodError / YAML errors. */
+  writeRaw(courseId: number, kind: ConfigKind, yamlText: string) {
+    const parsed = (YAML.parse(yamlText) ?? {}) as Record<string, unknown>;
+    (kind === "info" ? CourseInfoSchema : CourseWorkflowSchema).parse(parsed);
+    mkdirSync(join(this.configDir, "courses", String(courseId)), { recursive: true });
+    writeFileSync(this.coursePath(courseId, kind), yamlText);
+  }
+
+  // ---- layered resolution ----
+  private layers(courseId: number, kind: ConfigKind): Array<{ layer: Layer; value: Record<string, unknown> | null }> {
+    const layers: Array<{ layer: Layer; value: Record<string, unknown> | null }> = [
+      { layer: "default", value: this.readYaml(this.defaultsPath(kind)) },
+    ];
+    if (kind === "info") {
+      const generated = this.readYaml(this.generatedPath(courseId));
+      // generated file carries its own provenance per path (heuristic vs ai)
+      if (generated) {
+        const prov = (generated._provenance ?? {}) as Record<string, Layer>;
+        const hasAi = Object.values(prov).includes("ai");
+        layers.push({ layer: hasAi ? "ai" : "heuristic", value: generated });
+      }
+    }
+    layers.push({ layer: "user", value: this.readYaml(this.coursePath(courseId, kind)) });
+    return layers;
+  }
+
+  resolveInfo(courseId: number): CourseInfo {
+    const merged = mergeLayers(this.layers(courseId, "info"));
+    return CourseInfoSchema.parse({ ...merged, course_id: courseId });
+  }
+
+  resolveWorkflow(courseId: number): CourseWorkflow {
+    const merged = mergeLayers(this.layers(courseId, "workflow"));
+    return CourseWorkflowSchema.parse({ ...merged, course_id: courseId });
+  }
+
+  resolve(courseId: number): ResolvedConfigs {
+    return { info: this.resolveInfo(courseId), workflow: this.resolveWorkflow(courseId) };
+  }
+
+  // ---- writes from code ----
+
+  /** Persist a heuristic/AI proposal, stripping anything the user has already set. */
+  writeGenerated(courseId: number, proposal: CourseInfoInput, layer: Extract<Layer, "heuristic" | "ai">) {
+    const userFile = this.readYaml(this.coursePath(courseId, "info"));
+    const owned = userOwnedPaths((userFile?._provenance ?? {}) as Record<string, Layer>);
+    const stripped = stripUserOwned(proposal as Record<string, unknown>, owned);
+    const provenance: Record<string, Layer> = {};
+    for (const key of flattenPaths(stripped)) provenance[key] = layer;
+    this.writeYaml(
+      this.generatedPath(courseId),
+      { ...stripped, _provenance: provenance },
+      `# Generated by ${layer} analysis. Do not edit — put overrides in info.yaml instead.`,
+    );
+  }
+
+  /** Apply a partial user edit (e.g. from an inline UI menu) to the user file. */
+  patchUser(courseId: number, kind: "info", patch: CourseInfoInput): void;
+  patchUser(courseId: number, kind: "workflow", patch: CourseWorkflowInput): void;
+  patchUser(courseId: number, kind: ConfigKind, patch: Record<string, unknown>): void {
+    const existing = this.readYaml(this.coursePath(courseId, kind)) ?? {};
+    const merged = mergeLayers([
+      { layer: "user", value: existing },
+      { layer: "user", value: patch },
+    ]);
+    (kind === "info" ? CourseInfoSchema : CourseWorkflowSchema).parse(merged);
+    this.writeYaml(this.coursePath(courseId, kind), merged);
+  }
+
+  ensureDefaults() {
+    if (!existsSync(this.defaultsPath("info"))) {
+      this.writeYaml(this.defaultsPath("info"), {}, "# App-wide defaults for course info. Per-course info.yaml overrides these.");
+    }
+    if (!existsSync(this.defaultsPath("workflow"))) {
+      this.writeYaml(
+        this.defaultsPath("workflow"),
+        CourseWorkflowSchema.parse({}),
+        "# App-wide workflow defaults. Encode your general habits here; per-course workflow.yaml holds exceptions.",
+      );
+    }
+  }
+}
+
+function flattenPaths(obj: Record<string, unknown>, prefix = ""): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "_provenance") continue;
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length) {
+      out.push(...flattenPaths(v as Record<string, unknown>, path));
+    } else {
+      out.push(path);
+    }
+  }
+  return out;
+}

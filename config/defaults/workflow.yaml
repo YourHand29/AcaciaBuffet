@@ -1,0 +1,40 @@
+# App-wide workflow defaults. Encode your general habits here; per-course
+# config/courses/<id>/workflow.yaml holds exceptions. Schema: packages/course-config/src/schema.ts
+
+importance: normal
+
+layout:
+  - upcoming
+  - announcements
+  - modules:
+      view: current-week
+  - grades
+  - syllabus_card
+
+routines: []
+
+task_templates: {}
+
+automations:
+  on_new_file:
+    - action: download
+      include: ["**/*.pdf", "**/*.pptx", "**/*.docx"]
+      exclude: ["**/*.mp4", "**/*.mov"]
+  on_announcement: []
+  on_grade_posted:
+    - action: notify
+      channel: push
+  on_assignment_changed: []
+
+notifications:
+  channel: push
+  due_soon: [48, 6]
+  quiet_hours: null
+  announcements: push
+  new_files: digest
+  grade_posted: push
+
+focus:
+  hide_when_done: true
+  show_class_stats: true
+  module_window_days: 0

@@ -1,0 +1,72 @@
+# Example per-course WORKFLOW file — describes how *you* want to work with the course.
+# Copy to config/courses/<canvas course id>/workflow.yaml and edit.
+# Anything here overrides defaults/workflow.yaml. Never auto-generated or overwritten.
+
+importance: high
+
+layout:
+  - upcoming
+  - announcements:
+      summarize: true
+      limit: 5
+  - modules:
+      view: current-week
+  - grades
+  - syllabus_card
+  # discussions omitted on purpose: this professor never uses them
+
+routines:
+  - what: Review this week's slides
+    when: Mon 09:00
+  - what: Check Piazza
+    when: daily 18:00
+  - what: Start homework
+    when: 3 days before due
+
+task_templates:
+  homework:
+    match:
+      group: Homework
+    estimate: 3h
+    subtasks:
+      - name: Read problem set
+        offset: -3d
+      - name: Attempt problems
+        offset: -2d
+      - name: Review & submit
+        offset: -1d
+  exam:
+    match:
+      type: key_date
+    estimate: 10h
+    subtasks:
+      - name: Compile notes
+        offset: -7d
+      - name: Practice problems
+        offset: -3d
+      - name: Final review
+        offset: -1d
+
+automations:
+  on_new_file:
+    - action: download
+      include: ["**/*.pdf", "**/*.pptx"]
+    - action: create_task
+      name: "Read {{file.name}}"
+      due: +3d
+  on_announcement:
+    - action: summarize
+    - action: extract_action_items
+  on_grade_posted:
+    - action: notify
+      channel: push
+    - action: recompute_grade
+
+notifications:
+  channel: push
+  due_soon: [48, 6]
+  quiet_hours: "23:00-08:00"
+
+focus:
+  hide_when_done: true
+  show_class_stats: false

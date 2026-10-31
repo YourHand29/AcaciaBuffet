@@ -1,0 +1,54 @@
+# Example per-course INFO file — describes what the course *is*.
+# Copy to config/courses/<canvas course id>/info.yaml and edit.
+# Anything here overrides info.generated.yaml (heuristics/AI) and defaults/info.yaml.
+
+alias: "Bio 201"
+color: "#4caf50"
+
+content_sources:
+  homework: external
+  syllabus:
+    file_id: 987654
+
+grading:
+  weights_from: syllabus
+  categories:
+    Homework:
+      weight: 30
+      drop_lowest: 2
+      canvas_group_id: 11111
+    Midterms:
+      weight: 40
+      canvas_group_id: 22222
+    Final:
+      weight: 30
+      canvas_group_id: 33333
+
+key_dates:
+  - name: Midterm 1
+    date: 2026-10-14
+    location: Hall A
+    kind: exam
+  - name: Final Exam
+    date: 2026-12-15
+    kind: exam
+
+policies:
+  late: "10% per day, max 3 days"
+  office_hours: "Tue/Thu 2–3pm, Room 204"
+
+external:
+  - name: Gradescope
+    url: https://www.gradescope.com
+    role: homework_submission
+  - name: Piazza
+    url: https://piazza.com
+    role: discussions
+
+# Marks which fields you set by hand so re-analysis never overwrites them.
+_provenance:
+  alias: user
+  color: user
+  grading.categories: user
+  key_dates: user
+  policies: user
