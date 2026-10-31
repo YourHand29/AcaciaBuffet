@@ -9,7 +9,7 @@
     "node": ">=22.5"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel --filter ./apps/* dev",
+    "dev": "pnpm --parallel --filter \"./apps/**\" run dev",
     "dev:server": "pnpm --filter @acacia/server dev",
     "dev:web": "pnpm --filter @acacia/web dev",
     "sync": "pnpm --filter @acacia/server sync",
